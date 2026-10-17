@@ -38,6 +38,13 @@ Open [http://localhost:3000](http://localhost:3000).
 
 See `.env.example` for every variable. Leave `COMFY_BASE_URL` blank to use Comfy Cloud.
 
+No LLM key? The shot-list generator falls back to a deterministic mock (`LLM_API_KEY` empty or `LLM_MOCK=1`); the `/api/shotlist` response says `"provider": "mock"` or `"llm"`.
+
+```bash
+npm test                                         # unit + editor tests (vitest)
+npx tsx scripts/check-shotlist.ts http://localhost:3000   # API smoke test against a running dev server
+```
+
 ## Deploy
 
 _TODO: Vercel deploy steps and required environment variables._

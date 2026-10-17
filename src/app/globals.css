@@ -1,8 +1,9 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #050505;
+  --foreground: #ededed;
+  --amber: #fbbf24;
 }
 
 @theme inline {
@@ -12,15 +13,171 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html {
+  color-scheme: dark;
 }
 
 body {
-  background: var(--background);
+  background:
+    radial-gradient(ellipse 80% 50% at 50% -10%, rgb(251 191 36 / 0.08), transparent 70%),
+    var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+  min-height: 100vh;
+}
+
+/* Film grain + vignette overlay */
+body::before,
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 50;
+}
+body::before {
+  background: radial-gradient(ellipse at center, transparent 55%, rgb(0 0 0 / 0.55) 100%);
+}
+body::after {
+  inset: -100%;
+  opacity: 0.09;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  animation: grain 0.8s steps(4) infinite;
+}
+@keyframes grain {
+  0% { transform: translate(0, 0); }
+  25% { transform: translate(-3%, 2%); }
+  50% { transform: translate(2%, -3%); }
+  75% { transform: translate(-1%, 3%); }
+  100% { transform: translate(3%, -1%); }
+}
+
+/* Editor pieces */
+.card {
+  background: linear-gradient(180deg, rgb(255 255 255 / 0.04), rgb(255 255 255 / 0.015));
+  backdrop-filter: blur(2px);
+}
+.frame {
+  background:
+    repeating-linear-gradient(135deg, rgb(255 255 255 / 0.025) 0 6px, transparent 6px 12px),
+    #0b0b0b;
+}
+.field-label {
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: rgb(255 255 255 / 0.45);
+}
+.field {
+  border-radius: 0.5rem;
+  border: 1px solid rgb(255 255 255 / 0.12);
+  background: rgb(0 0 0 / 0.4);
+  padding: 0.4rem 0.6rem;
+  font-size: 0.875rem;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.field:focus {
+  border-color: var(--amber);
+}
+.icon-btn {
+  display: grid;
+  place-items: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 9999px;
+  font-size: 0.8rem;
+  color: rgb(255 255 255 / 0.5);
+}
+.icon-btn:hover:not(:disabled) {
+  color: var(--amber);
+  background: rgb(255 255 255 / 0.06);
+}
+.icon-btn:disabled {
+  opacity: 0.25;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border-radius: 9999px;
+  border: 1px solid rgb(255 255 255 / 0.12);
+  padding: 0.25rem 0.6rem 0.25rem 0.4rem;
+  font-size: 0.72rem;
+  color: rgb(255 255 255 / 0.7);
+  transition: all 0.15s;
+}
+.chip:hover {
+  border-color: rgb(251 191 36 / 0.6);
+  color: #fff;
+}
+.chip[aria-pressed="true"] {
+  border-color: var(--amber);
+  background: rgb(251 191 36 / 0.15);
+  color: #fde68a;
+}
+
+/* Camera move icons: frame + subject that moves like the camera */
+.cam-icon {
+  position: relative;
+  display: inline-block;
+  width: 18px;
+  height: 12px;
+  border: 1px solid currentColor;
+  border-radius: 2px;
+  opacity: 0.8;
+  overflow: hidden;
+}
+.cam-subject {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 4px;
+  height: 4px;
+  margin: -2px 0 0 -2px;
+  border-radius: 9999px;
+  background: currentColor;
+  animation: 1.6s ease-in-out infinite alternate;
+}
+.cam-icon[data-move="dolly-in"] .cam-subject { animation-name: cam-dolly-in; }
+.cam-icon[data-move="dolly-out"] .cam-subject { animation-name: cam-dolly-out; }
+.cam-icon[data-move="truck-left"] .cam-subject { animation-name: cam-truck-left; }
+.cam-icon[data-move="truck-right"] .cam-subject { animation-name: cam-truck-right; }
+.cam-icon[data-move="crane-up"] .cam-subject { animation-name: cam-crane-up; }
+.cam-icon[data-move="crane-down"] .cam-subject { animation-name: cam-crane-down; }
+.cam-icon[data-move="orbit"] .cam-subject { animation: cam-orbit 1.6s linear infinite; }
+.cam-icon[data-move="handheld"] .cam-subject { animation: cam-handheld 0.5s steps(2) infinite; }
+.cam-icon[data-move="whip-pan"] .cam-subject { animation: cam-whip 1.4s cubic-bezier(0.8, 0, 0.2, 1) infinite; }
+.cam-icon[data-move="static"] .cam-subject { animation: none; }
+
+@keyframes cam-dolly-in { from { transform: scale(0.6); } to { transform: scale(2.2); } }
+@keyframes cam-dolly-out { from { transform: scale(2.2); } to { transform: scale(0.6); } }
+@keyframes cam-truck-left { from { transform: translateX(5px); } to { transform: translateX(-5px); } }
+@keyframes cam-truck-right { from { transform: translateX(-5px); } to { transform: translateX(5px); } }
+@keyframes cam-crane-up { from { transform: translateY(3px); } to { transform: translateY(-3px); } }
+@keyframes cam-crane-down { from { transform: translateY(-3px); } to { transform: translateY(3px); } }
+@keyframes cam-orbit {
+  0% { transform: translate(-5px, 0) scale(1); }
+  25% { transform: translate(0, 2px) scale(1.3); }
+  50% { transform: translate(5px, 0) scale(1); }
+  75% { transform: translate(0, -2px) scale(0.7); }
+  100% { transform: translate(-5px, 0) scale(1); }
+}
+@keyframes cam-handheld {
+  0% { transform: translate(0.5px, -0.5px); }
+  50% { transform: translate(-0.5px, 0.7px); }
+  100% { transform: translate(0.7px, 0.3px); }
+}
+@keyframes cam-whip {
+  0%, 40% { transform: translateX(-6px) scaleX(1); }
+  50% { transform: translateX(0) scaleX(3); }
+  60%, 100% { transform: translateX(6px) scaleX(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body::after,
+  .cam-subject {
+    animation: none !important;
+  }
 }
