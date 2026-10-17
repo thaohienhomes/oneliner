@@ -3,7 +3,7 @@ export default function Home() {
     <main className="font-sans flex min-h-screen items-center justify-center p-8 sm:p-20">
       <div className="flex w-full max-w-3xl flex-col gap-6">
         <h1 className="text-4xl font-bold tracking-tight sm:text-5xl">
-          LoglineReel
+          Oneliner
         </h1>
         <label htmlFor="logline" className="sr-only">
           Your story in one sentence

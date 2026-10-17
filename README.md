@@ -1,4 +1,4 @@
-# LoglineReel
+# Oneliner
 
 Type your story in one sentence. Get a movie trailer.
 
@@ -6,7 +6,7 @@ Type your story in one sentence. Get a movie trailer.
 
 ## What it is
 
-LoglineReel turns a single-sentence logline into a short cinematic trailer. You write one line; the app plans the shots, generates the video clips, and stitches them into a trailer you can watch and share.
+Oneliner turns a single-sentence logline into a short cinematic trailer. You write one line; the app plans the shots, generates the video clips, and stitches them into a trailer you can watch and share.
 
 _TODO: expand._
 

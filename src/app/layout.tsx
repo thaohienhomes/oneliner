@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "LoglineReel",
+  title: "Oneliner",
   description: "Turn your story in one sentence into a movie trailer.",
 };
 
