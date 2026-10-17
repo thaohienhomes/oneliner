@@ -5,12 +5,13 @@
  */
 import { mkdirSync } from "node:fs";
 import { comfyTarget } from "../lib/comfy";
+import { RENDER_SIZE } from "../lib/renderConfig";
 import { getFirstFrame, renderFirstFrame, renderShot, snapVideoSize, waitForJob, RenderError } from "../lib/renderShot";
 import { I2V, I2V_HAS_AUDIO, T2I, UNKNOWNS } from "../lib/workflowMap";
 
 const PROMPT = "slow dolly-in on a lighthouse at dusk, 35mm, moody";
 const NEGATIVE = "pc game, console game, video game, cartoon, childish, ugly, blurry, low quality";
-const REQUESTED = { width: 768, height: 432 };
+const REQUESTED = RENDER_SIZE["16:9"];
 const SECONDS = 3;
 const SEED = 20261017;
 
@@ -18,7 +19,7 @@ const t = () => performance.now();
 const secs = (ms: number) => `${(ms / 1000).toFixed(1)}s`;
 
 async function main() {
-  // 768x432 is not valid for this LTX-2.3 graph (half-res stage needs multiples of 32).
+  // Half-res stage needs multiples of 32; snapVideoSize is a no-op for RENDER_SIZE.
   const { width, height } = snapVideoSize(REQUESTED.width, REQUESTED.height);
   console.log(`Target: ${comfyTarget()}`);
   console.log(`Size: requested ${REQUESTED.width}x${REQUESTED.height} -> using ${width}x${height}`);

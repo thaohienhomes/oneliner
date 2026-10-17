@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { DEFAULT_ASPECT, RENDER_SIZE, SHOT_SECONDS, type Aspect } from "../../../../lib/renderConfig";
 import { getFirstFrame, renderFirstFrame, renderShot, snapVideoSize, toRenderError } from "../../../../lib/renderShot";
 
 // T2I must finish before I2V can be submitted (it needs the frame), so this
@@ -13,6 +14,7 @@ type Body = {
   width?: unknown;
   height?: unknown;
   seconds?: unknown;
+  aspect?: unknown;
 };
 
 const num = (v: unknown, fallback: number) => (typeof v === "number" && Number.isFinite(v) ? v : fallback);
@@ -30,8 +32,10 @@ export async function POST(req: Request) {
   const prompt = body.prompt.trim();
   const negative = typeof body.negative === "string" ? body.negative : undefined;
   const seed = typeof body.seed === "number" ? Math.floor(body.seed) : undefined;
-  const { width, height } = snapVideoSize(num(body.width, 768), num(body.height, 448));
-  const seconds = Math.min(10, Math.max(1, Math.round(num(body.seconds, 3))));
+  const aspect: Aspect = body.aspect === "9:16" ? "9:16" : DEFAULT_ASPECT;
+  const size = RENDER_SIZE[aspect];
+  const { width, height } = snapVideoSize(num(body.width, size.width), num(body.height, size.height));
+  const seconds = Math.min(SHOT_SECONDS.max, Math.max(SHOT_SECONDS.min, Math.round(num(body.seconds, SHOT_SECONDS.default))));
 
   try {
     const frameJobId = await renderFirstFrame({ prompt, seed, width, height });
