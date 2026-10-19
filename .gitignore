@@ -23,6 +23,9 @@
 # re-hosted clips in local dev (lib/rehost.ts; Vercel Blob in prod)
 /public/renders/
 
+# published trailers in local dev (lib/trailers.ts local adapter; Vercel Blob in prod)
+/public/trailers/
+
 # ffmpeg.wasm worker, copied from node_modules on predev/prebuild
 /public/ffmpeg/
 

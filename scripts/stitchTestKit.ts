@@ -64,6 +64,61 @@ const mae = (a: Buffer, b: Buffer) => {
   return s / n;
 };
 
+/** curl -> status, headers, body (headers of the final response). */
+async function curl(url: string, head = false) {
+  const args = ["-sS", "-D", "-", "-o", head ? (process.platform === "win32" ? "NUL" : "/dev/null") : "-", "--max-time", "60", url];
+  if (head) args.unshift("-r", "0-0"); // tiny ranged GET, avoids pulling the whole MP4
+  const { stdout } = await run("curl", args, { maxBuffer: 64 * 1024 * 1024 });
+  const [headBlock, ...rest] = stdout.split(/\r?\n\r?\n/);
+  const status = Number(/^HTTP\/\S+ (\d+)/.exec(headBlock)?.[1] ?? 0);
+  const headers = Object.fromEntries(
+    headBlock
+      .split(/\r?\n/)
+      .slice(1)
+      .map((l) => [l.slice(0, l.indexOf(":")).toLowerCase(), l.slice(l.indexOf(":") + 1).trim()]),
+  );
+  return { status, headers, body: rest.join("\n\n") };
+}
+
+const metaContent = (html: string, prop: string) =>
+  new RegExp(`<meta[^>]+property="${prop}"[^>]+content="([^"]+)"`).exec(html)?.[1] ??
+  new RegExp(`<meta[^>]+name="${prop}"[^>]+content="([^"]+)"`).exec(html)?.[1];
+
+/** Prompt 7 DONE TEST: share page OG tags, MP4 URL, poster, gallery. */
+export async function checkPublished(base: string, id: string) {
+  const page = await curl(`${base}/t/${id}`);
+  const ogVideo = metaContent(page.body, "og:video") ?? metaContent(page.body, "og:video:url");
+  const ogImage = metaContent(page.body, "og:image");
+  const twCard = metaContent(page.body, "twitter:card");
+  console.log(`curl /t/${id} -> ${page.status}; og:video=${ogVideo}; og:image=${ogImage}; twitter:card=${twCard}`);
+
+  const full = ogVideo ? await curl(ogVideo.replace(/&amp;/g, "&")) : null;
+  const ranged = ogVideo ? await curl(ogVideo.replace(/&amp;/g, "&"), true) : null;
+  console.log(
+    `curl MP4 -> ${full?.status} ${full?.headers["content-type"]} ${full?.headers["content-length"]}B; ranged -> ${ranged?.status} ${ranged?.headers["content-range"]}`,
+  );
+  const img = ogImage ? await curl(ogImage.replace(/&amp;/g, "&"), true) : null;
+  console.log(`curl poster -> ${img?.status} ${img?.headers["content-type"]}`);
+
+  const home = await curl(`${base}/`);
+  const inGallery = home.body.includes(`href="/t/${id}"`);
+  console.log(`curl / -> ${home.status}; gallery lists /t/${id}: ${inGallery}`);
+
+  const shareX = /href="https:\/\/twitter\.com\/intent\/tweet\?[^"]*OpenSourceHiggsfield/.test(page.body);
+  const checks = {
+    pageOk: page.status === 200,
+    ogVideo: !!ogVideo,
+    ogImage: !!ogImage,
+    mp4Is200VideoMp4: full?.status === 200 && full.headers["content-type"] === "video/mp4",
+    mp4Ranged206: ranged?.status === 206,
+    posterIsJpeg: (img?.status === 200 || img?.status === 206) && img.headers["content-type"] === "image/jpeg",
+    galleryListsIt: home.status === 200 && inGallery,
+    shareIntentWithHashtag: shareX,
+  };
+  console.log("checks:", checks);
+  return Object.values(checks).every(Boolean);
+}
+
 export async function checkTrailer(file: string, o: { target: number; width: number; height: number; range?: [number, number] }) {
   const { stdout: fmt } = await run("ffprobe", [
     "-v", "error",

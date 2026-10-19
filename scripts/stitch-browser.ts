@@ -4,7 +4,10 @@
  * ffmpeg.wasm + the canvas title card run for real. No Comfy calls: the
  * project is seeded into localStorage with clips already in public/renders/.
  *
- *   npx next start -p 3100   (or dev)   then   npx tsx scripts/stitch-browser.ts [baseUrl]
+ *   npx next start -p 3100   (or dev)   then   npx tsx scripts/stitch-browser.ts [baseUrl] [--publish]
+ *
+ * --publish also clicks Publish (Prompt 7) and checks the share page, MP4 URL
+ * and home gallery with curl.
  *
  * Saves the stitched MP4 from the page to .tmp/stitch/browser-trailer.mp4
  * and runs the same ffprobe checks as scripts/stitch-test.ts.
@@ -15,9 +18,9 @@ import { chromium } from "playwright-core";
 import { RENDER_SIZE } from "../lib/renderConfig";
 import { COLD_OPEN_SECONDS, TITLE_CARD_SECONDS } from "../lib/stitchPlan";
 import { STORAGE_KEY } from "../src/store/editorStore";
-import { checkTrailer, loadTestProject } from "./stitchTestKit";
+import { checkPublished, checkTrailer, loadTestProject } from "./stitchTestKit";
 
-const BASE = process.argv[2] ?? "http://localhost:3100";
+const BASE = process.argv.slice(2).find((a) => !a.startsWith("--")) ?? "http://localhost:3100";
 const OUT = path.join(process.cwd(), ".tmp", "stitch");
 const { width: W, height: H } = RENDER_SIZE["16:9"];
 
@@ -103,6 +106,27 @@ async function main() {
     const res = await checkTrailer(file, { target, width: W, height: H });
     if (!res.pass || !download) process.exit(1);
     console.log("STITCH DONE TEST (browser/ffmpeg.wasm): PASS");
+
+    if (process.argv.includes("--publish")) {
+      // Prompt 7 DONE TEST: click Publish (local adapter), then check with curl.
+      await page.getByRole("button", { name: "Publish" }).click();
+      const link = page.getByRole("link", { name: /View share page/ });
+      await Promise.race([
+        link.waitFor({ timeout: 60_000 }),
+        page
+          .locator('[aria-label="Trailer"] [role="alert"]')
+          .waitFor({ timeout: 60_000 })
+          .then(async () => {
+            throw new Error(`Publish error shown: ${await page.locator('[aria-label="Trailer"] [role="alert"]').textContent()}`);
+          }),
+      ]);
+      const href = (await link.getAttribute("href"))!;
+      const id = href.split("/").pop()!;
+      console.log(`\nPublished: ${href}`);
+      const ok = await checkPublished(BASE, id);
+      if (!ok) process.exit(1);
+      console.log("PUBLISH DONE TEST: PASS");
+    }
   } finally {
     await browser.close();
   }

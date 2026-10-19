@@ -1,6 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
+import { shotToPrompt } from "../../lib/shotPresets";
 import { slugify } from "../../lib/slug";
 import type { StitchProgress, StitchResult } from "../lib/browserStitch";
 import { useEditor } from "../store/editorStore";
@@ -16,18 +18,23 @@ function cardFonts() {
 
 export type Stitched = StitchResult & { url: string };
 
-/** "Stitch trailer": ffmpeg.wasm in the browser -> preview player + Download MP4. */
-export function StitchPanel({ onStitched }: { onStitched?: (r: Stitched | null) => void }) {
+type Published = { id: string; url: string };
+
+/** "Stitch trailer": ffmpeg.wasm in the browser -> preview player + Download MP4 -> Publish. */
+export function StitchPanel() {
   const shots = useEditor((s) => s.shots);
   const renders = useEditor((s) => s.renders);
   const title = useEditor((s) => s.title);
   const tagline = useEditor((s) => s.tagline);
   const aspect = useEditor((s) => s.aspect);
+  const logline = useEditor((s) => s.logline);
 
   const [coldOpen, setColdOpen] = useState(true);
   const [progress, setProgress] = useState<StitchProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<Stitched | null>(null);
+  const [publishing, setPublishing] = useState(false);
+  const [published, setPublished] = useState<Published | null>(null);
   const urlRef = useRef<string | null>(null);
 
   useEffect(() => () => void (urlRef.current && URL.revokeObjectURL(urlRef.current)), []);
@@ -49,10 +56,48 @@ export function StitchPanel({ onStitched }: { onStitched?: (r: Stitched | null) 
       urlRef.current = URL.createObjectURL(r.blob);
       const stitched = { ...r, url: urlRef.current };
       setResult(stitched);
-      onStitched?.(stitched);
+      setPublished(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setProgress(null);
+    }
+  };
+
+  const publish = async () => {
+    if (!result) return;
+    setError(null);
+    setPublishing(true);
+    try {
+      const { grabPoster } = await import("../lib/poster");
+      const poster = await grabPoster(result.url);
+      const meta = {
+        title,
+        tagline,
+        logline,
+        aspect,
+        duration: Number(result.duration.toFixed(2)),
+        shots: shots.map((s) => ({
+          shotType: s.shotType,
+          lens: s.lens,
+          cameraMove: s.cameraMove,
+          mood: s.mood,
+          action: s.action,
+          seconds: s.seconds,
+          prompt: shotToPrompt(s),
+        })),
+      };
+      const form = new FormData();
+      form.set("meta", JSON.stringify(meta));
+      form.set("video", result.blob, "trailer.mp4");
+      form.set("poster", poster, "poster.jpg");
+      const res = await fetch("/api/publish", { method: "POST", body: form });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.message ?? `Publish failed (${res.status})`);
+      setPublished({ id: data.id, url: data.url });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPublishing(false);
     }
   };
 
@@ -118,6 +163,23 @@ export function StitchPanel({ onStitched }: { onStitched?: (r: Stitched | null) 
             >
               Download MP4
             </a>
+            {published ? (
+              <Link
+                href={published.url}
+                className="rounded-xl bg-amber-400 px-4 py-2 text-sm font-semibold text-black transition hover:bg-amber-300"
+              >
+                View share page →
+              </Link>
+            ) : (
+              <button
+                type="button"
+                onClick={publish}
+                disabled={publishing || busy}
+                className="rounded-xl bg-amber-400 px-4 py-2 text-sm font-semibold text-black transition hover:bg-amber-300 disabled:cursor-wait disabled:opacity-60"
+              >
+                {publishing ? "Publishing…" : "Publish"}
+              </button>
+            )}
             <span className="font-mono text-xs text-white/40">
               {result.duration.toFixed(2)}s · {result.width}×{result.height} · {(result.blob.size / 1e6).toFixed(1)} MB
             </span>

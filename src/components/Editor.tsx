@@ -25,7 +25,7 @@ export function Editor() {
   const unrendered = renders.filter((r) => !r).length;
 
   return (
-    <main className="relative z-10 mx-auto flex min-h-screen w-full max-w-[1400px] flex-col gap-8 px-4 py-6 sm:px-8 sm:py-10">
+    <main className="relative z-10 mx-auto flex w-full max-w-[1400px] flex-col gap-8 px-4 py-6 sm:px-8 sm:py-10">
       {/* Top bar */}
       <header className="flex flex-wrap items-center justify-between gap-4">
         <h1 className="font-mono text-sm font-semibold uppercase tracking-[0.45em] text-amber-400">Oneliner</h1>
