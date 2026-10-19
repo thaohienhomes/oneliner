@@ -48,10 +48,23 @@ Open [http://localhost:3000](http://localhost:3000).
 
 See `.env.example` for every variable. Leave `COMFY_BASE_URL` blank to use Comfy Cloud.
 
-No LLM key? The shot-list generator falls back to a deterministic mock (`LLM_API_KEY` empty or `LLM_MOCK=1`); the `/api/shotlist` response says `"provider": "mock"` or `"llm"`.
+### Shot-list LLM
+
+The shot-list writer calls an OpenAI-compatible Chat Completions API in JSON mode, Groq by default:
+
+| Variable | Default |
+| --- | --- |
+| `LLM_API_KEY` (or `GROQ_API_KEY`) | none: no key = mock |
+| `LLM_BASE_URL` | `https://api.groq.com/openai/v1` |
+| `LLM_MODEL` | `openai/gpt-oss-120b` |
+| `LLM_FALLBACK_MODEL` | `qwen/qwen3.8-27b` (`none` to disable) |
+| `LLM_MOCK` | off; `1` forces the deterministic mock |
+
+Each model gets ~20s and one repair attempt if its JSON doesn't validate. If both models fail, the deterministic mock answers so the editor never dead-ends. `/api/shotlist` and `/api/shotlist/regenerate` return `"provider": "llm" | "mock"`, `"model"` (model id or `"mock"`), and `"fallback": true` when the mock stood in for a failing LLM. The IP guard (blocklist + "original characters only" instructions) runs on both paths, before and after the model.
 
 ```bash
-npm test                                         # unit + editor tests (vitest)
+npm test                                         # unit + editor tests (vitest, no network)
+npx tsx scripts/llm-smoke.ts                     # REAL Groq calls (<= 6): 3 loglines + fallback model, prints latency/model
 npx tsx scripts/check-shotlist.ts http://localhost:3000   # API smoke test against a running dev server
 npx tsx scripts/stitch-test.ts                   # stitch filter graph with native ffmpeg + ffprobe checks (no credits)
 npx tsx scripts/stitch-browser.ts http://localhost:3100   # same, through the real UI + ffmpeg.wasm in headless Edge/Chrome
@@ -73,7 +86,7 @@ The ComfyUI workflows used by the app live in [`workflows/`](./workflows), expor
 
 - LTX-2 (video generation)
 - ComfyUI + Comfy SDK / Comfy Cloud
-- An OpenAI-compatible LLM (configurable via `LLM_*` env vars)
+- Shot-list LLM: `openai/gpt-oss-120b` with `qwen/qwen3.8-27b` fallback, on Groq (any OpenAI-compatible API via `LLM_*` env vars)
 - Next.js 15, TypeScript, Tailwind CSS
 - Vercel Blob
 

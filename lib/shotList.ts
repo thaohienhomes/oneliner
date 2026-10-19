@@ -1,14 +1,14 @@
 /**
- * Logline -> shot list. Server-only (imports the AI SDK).
+ * Logline -> shot list. Server-only.
  *
- * Provider: any OpenAI-compatible Chat Completions endpoint configured by
- * LLM_BASE_URL / LLM_MODEL / LLM_API_KEY (OpenAI, or Qwen/Llama on Together,
- * Groq, OpenRouter, vLLM, ...). Falls back to a deterministic mock when
- * LLM_API_KEY is empty or LLM_MOCK=1, so the app works with no key.
+ * Provider: an OpenAI-compatible Chat Completions endpoint (Groq by default;
+ * see ./llm for LLM_BASE_URL / LLM_MODEL / LLM_FALLBACK_MODEL / LLM_API_KEY or
+ * GROQ_API_KEY). Primary model -> fallback model -> deterministic mock, so the
+ * app always returns a shot list. The mock is used directly when there is no
+ * key or LLM_MOCK=1.
  */
-import { createOpenAI } from "@ai-sdk/openai";
-import { extractJsonMiddleware, generateText, Output, wrapLanguageModel } from "ai";
 import { z } from "zod";
+import { chatJson, llmApiKey, LlmUnavailableError, type Attempt, type LlmConfig } from "./llm";
 import { guardIP, shortName, type Replacement } from "./ipGuard";
 import { MAX_TOTAL_SECONDS, SHOT_COUNT, SHOT_SECONDS, type Aspect } from "./renderConfig";
 import {
@@ -25,13 +25,22 @@ export { shotToPrompt } from "./shot";
 export type { Shot, ShotList } from "./shot";
 
 export type Provider = "mock" | "llm";
-export type ShotListResult = ShotList & { provider: Provider; replacements: Replacement[] };
+/** `model` is the LLM model id, or "mock". `fallback` = an LLM was configured but every model failed. */
+export type ProviderInfo = { provider: Provider; model: string; fallback?: true };
+export type ShotListResult = ShotList & ProviderInfo & { replacements: Replacement[] };
 
 export function activeProvider(): Provider {
   const mock = process.env.LLM_MOCK?.trim().toLowerCase();
   if (mock === "1" || mock === "true") return "mock";
-  return process.env.LLM_API_KEY?.trim() ? "llm" : "mock";
+  return llmApiKey() ? "llm" : "mock";
 }
+
+function logFallback(where: string, err: unknown) {
+  const detail = err instanceof LlmUnavailableError ? err.attempts.map((a) => `${a.model} ${a.ms}ms ${a.error}`).join(" | ") : err;
+  console.warn(`[${where}] LLM unavailable, using mock:`, detail);
+}
+
+export type { Attempt };
 
 export class ShotListError extends Error {
   constructor(
@@ -60,19 +69,31 @@ Rules:
 - mood: 2-5 words.
 - Vary shot sizes and moves like a real trailer: establish the world, introduce the hero, raise the stakes, end on a striking button shot.
 - title: a short original trailer title. tagline: one punchy line.
-Respond with JSON only.`;
+Respond with a single JSON object only.`;
 
-function llmModel() {
-  const model = process.env.LLM_MODEL?.trim();
-  if (!model) throw new ShotListError("LLM_MODEL is not set (required when LLM_API_KEY is set).", 500);
-  const provider = createOpenAI({
-    name: "llm",
-    apiKey: process.env.LLM_API_KEY?.trim(),
-    baseURL: process.env.LLM_BASE_URL?.trim() || undefined,
-  });
-  // Chat Completions (not Responses API) = the widest OpenAI-compatible surface.
-  return wrapLanguageModel({ model: provider.chat(model), middleware: extractJsonMiddleware() });
-}
+const SHOT_LIST_SHAPE = `{"title": string, "tagline": string, "shots": [{"shotType": string, "lens": string, "cameraMove": string, "mood": string, "action": string, "seconds": integer}]}`;
+
+/* Lenient parse of model output (casing, "3", 7 shots, long strings); finalizeDraft clamps it to the strict schema. */
+const looseEnum = <T extends readonly [string, ...string[]]>(values: T) =>
+  z.preprocess((v) => (typeof v === "string" ? v.trim().toLowerCase() : v), z.enum(values));
+const clip = (max: number) => z.string().trim().min(1).transform((s) => s.slice(0, max));
+const LlmShotListSchema = z.object({
+  title: clip(80),
+  tagline: clip(160),
+  shots: z
+    .array(
+      z.object({
+        shotType: looseEnum(SHOT_TYPES),
+        lens: looseEnum(LENSES),
+        cameraMove: looseEnum(CAMERA_MOVES),
+        mood: clip(80),
+        action: clip(300),
+        seconds: z.coerce.number().finite(),
+      }),
+    )
+    .min(SHOT_COUNT.min),
+});
+const LlmActionSchema = z.object({ action: clip(300) });
 
 /* ------------------------------------------------------------------ */
 /* Normalization                                                       */
@@ -83,18 +104,19 @@ type Draft = z.infer<typeof ShotListDraftSchema>;
 /** Assign ids, clamp to whole seconds, trim to the 13s budget, re-apply the IP guard. */
 export function finalizeDraft(draft: Draft, seedReplacements: Replacement[] = []): ShotList & { replacements: Replacement[] } {
   const replacements = [...seedReplacements];
-  const guard = (s: string) => {
-    const g = guardIP(s);
+  // Short stand-in names in capped fields so a guarded title can't blow its length limit.
+  const guard = (s: string, max = 300, short = true) => {
+    const g = guardIP(s, { short });
     for (const r of g.replacements) if (!replacements.some((x) => x.from.toLowerCase() === r.from.toLowerCase())) replacements.push(r);
-    return g.text;
+    return g.text.slice(0, max);
   };
 
   const shots: Shot[] = draft.shots.slice(0, SHOT_COUNT.max).map((s, i) => ({
     ...s,
     id: `shot-${i + 1}-${hash(`${draft.title}|${s.action}|${i}`).toString(36)}`,
     seconds: Math.min(SHOT_SECONDS.max, Math.max(SHOT_SECONDS.min, Math.round(s.seconds))),
-    action: guard(s.action),
-    mood: guard(s.mood),
+    action: guard(s.action, 300, false),
+    mood: guard(s.mood, 80),
   }));
 
   // Over budget: shave a second off the longest shot until it fits (6 x 2s = 12s always fits).
@@ -105,7 +127,7 @@ export function finalizeDraft(draft: Draft, seedReplacements: Replacement[] = []
     total -= 1;
   }
 
-  const list = { title: guard(draft.title), tagline: guard(draft.tagline), shots };
+  const list = { title: guard(draft.title, 80), tagline: guard(draft.tagline, 160), shots };
   const parsed = ShotListSchema.safeParse(list);
   if (!parsed.success) throw new ShotListError(`Shot list failed validation: ${z.prettifyError(parsed.error)}`);
   return { ...parsed.data, replacements };
@@ -184,57 +206,69 @@ const MOCK_ALT_ACTIONS = [
 /* Public API                                                          */
 /* ------------------------------------------------------------------ */
 
-export async function generateShotList(logline: string, aspect: Aspect): Promise<ShotListResult> {
-  const provider = activeProvider();
-  if (provider === "mock") return { provider, ...mockShotList(logline, aspect) };
+/** Test/smoke hooks: override the LLM config (e.g. force the fallback model) and observe per-model attempts. */
+export type LlmCallOptions = { config?: LlmConfig; onAttempts?: (attempts: Attempt[]) => void };
 
-  // Guard the logline before the model sees it; the system prompt covers the rest.
+export async function generateShotList(logline: string, aspect: Aspect, opts: LlmCallOptions = {}): Promise<ShotListResult> {
+  if (activeProvider() === "mock") return { provider: "mock", model: "mock", ...mockShotList(logline, aspect) };
+
+  // Guard the logline before the model sees it; the system prompt covers the rest,
+  // and finalizeDraft re-guards everything the model wrote.
   const guarded = guardIP(logline);
   const orientation = aspect === "9:16" ? "vertical 9:16 (frame for portrait, subjects centered)" : "horizontal 16:9 widescreen";
   try {
-    const { output } = await generateText({
-      model: llmModel(),
+    const { data, model, attempts } = await chatJson({
       system: SYSTEM_PROMPT,
-      prompt: `Logline: ${guarded.text}\nAspect: ${orientation}`,
-      output: Output.object({ schema: ShotListDraftSchema, name: "shot_list" }),
+      prompt: `Logline: ${guarded.text}\nAspect: ${orientation}\nReturn JSON with exactly this shape: ${SHOT_LIST_SHAPE}`,
+      schema: LlmShotListSchema,
       temperature: 0.8,
-      maxRetries: 1,
+      config: opts.config,
     });
-    return { provider, ...finalizeDraft(output, guarded.replacements) };
+    opts.onAttempts?.(attempts);
+    return { provider: "llm", model, ...finalizeDraft(data, guarded.replacements) };
   } catch (err) {
-    if (err instanceof ShotListError) throw err;
-    throw new ShotListError(`LLM shot list failed: ${err instanceof Error ? err.message : String(err)}`);
+    if (err instanceof LlmUnavailableError) opts.onAttempts?.(err.attempts);
+    logFallback("shotlist", err);
+    return { provider: "mock", model: "mock", fallback: true, ...mockShotList(logline, aspect) };
   }
 }
 
 /** Rewrite just the action sentence of one shot. */
-export async function regenerateShotAction(input: {
-  logline: string;
-  shot: Pick<Shot, "shotType" | "lens" | "cameraMove" | "mood" | "action">;
-  index: number;
-  variant?: number;
-}): Promise<{ provider: Provider; action: string; replacements: Replacement[] }> {
-  const provider = activeProvider();
+export async function regenerateShotAction(
+  input: {
+    logline: string;
+    shot: Pick<Shot, "shotType" | "lens" | "cameraMove" | "mood" | "action">;
+    index: number;
+    variant?: number;
+  },
+  opts: LlmCallOptions = {},
+): Promise<ProviderInfo & { action: string; replacements: Replacement[] }> {
   const guarded = guardIP(input.logline);
-
-  if (provider === "mock") {
+  const mock = (fallback?: true) => {
     const { subject } = parseLogline(guarded.text, guarded.replacements);
     const tpl = pick(MOCK_ALT_ACTIONS, hash(input.logline) + input.index + (input.variant ?? 0));
-    return { provider, action: tpl.replace("{S}", cap(subject)).replace("{s}", subject), replacements: guarded.replacements };
-  }
+    const action = tpl.replace("{S}", cap(subject)).replace("{s}", subject);
+    return { provider: "mock" as const, model: "mock", ...(fallback && { fallback }), action, replacements: guarded.replacements };
+  };
+  if (activeProvider() === "mock") return mock();
 
+  // The current action and mood come from the client, so guard them too.
+  const current = guardIP(input.shot.action).text;
+  const mood = guardIP(input.shot.mood).text;
   try {
-    const { output } = await generateText({
-      model: llmModel(),
+    const { data, model, attempts } = await chatJson({
       system: SYSTEM_PROMPT,
-      prompt: `Logline: ${guarded.text}\nRewrite ONLY the action sentence for shot ${input.index + 1} (${input.shot.shotType}, ${input.shot.lens}, ${input.shot.cameraMove}, mood: ${input.shot.mood}). Make it different from: "${input.shot.action}". One sentence.`,
-      output: Output.object({ schema: z.object({ action: z.string().min(1).max(300) }), name: "shot_action" }),
+      prompt: `Logline: ${guarded.text}\nRewrite ONLY the action sentence for shot ${input.index + 1} (${input.shot.shotType}, ${input.shot.lens}, ${input.shot.cameraMove}, mood: ${mood}). Make it different from: "${current}". One sentence, original characters only.\nReturn JSON with exactly this shape: {"action": string}`,
+      schema: LlmActionSchema,
       temperature: 1,
-      maxRetries: 1,
+      config: opts.config,
     });
-    const g = guardIP(output.action);
-    return { provider, action: g.text, replacements: [...guarded.replacements, ...g.replacements] };
+    opts.onAttempts?.(attempts);
+    const g = guardIP(data.action);
+    return { provider: "llm", model, action: g.text, replacements: [...guarded.replacements, ...g.replacements] };
   } catch (err) {
-    throw new ShotListError(`LLM shot rewrite failed: ${err instanceof Error ? err.message : String(err)}`);
+    if (err instanceof LlmUnavailableError) opts.onAttempts?.(err.attempts);
+    logFallback("shotlist/regenerate", err);
+    return mock(true);
   }
 }

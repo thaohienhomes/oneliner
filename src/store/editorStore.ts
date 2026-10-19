@@ -38,6 +38,8 @@ export type EditorData = {
   tagline: string;
   shots: Shot[];
   provider: Provider | null;
+  /** LLM model id that wrote the list, or "mock". Optional: older persisted state lacks it. */
+  model?: string | null;
   renders: Record<string, ShotRender>;
 };
 
@@ -75,6 +77,7 @@ export const INITIAL_DATA: EditorData = {
   tagline: "",
   shots: [],
   provider: null,
+  model: null,
   renders: {},
 };
 
@@ -294,12 +297,20 @@ export const useEditor = create<EditorState>()(
         }
         set({ status: "loading", error: null });
         try {
-          const data = await postJson<{ title: string; tagline: string; shots: Shot[]; provider: Provider }>("/api/shotlist", {
-            logline,
-            aspect,
-          });
+          const data = await postJson<{ title: string; tagline: string; shots: Shot[]; provider: Provider; model?: string }>(
+            "/api/shotlist",
+            { logline, aspect },
+          );
           // New shot ids: old renders belong to the previous list (their tasks stop on their own).
-          set({ title: data.title, tagline: data.tagline, shots: data.shots, provider: data.provider, status: "idle", renders: {} });
+          set({
+            title: data.title,
+            tagline: data.tagline,
+            shots: data.shots,
+            provider: data.provider,
+            model: data.model ?? null,
+            status: "idle",
+            renders: {},
+          });
         } catch (err) {
           set({ status: "error", error: err instanceof Error ? err.message : String(err) });
           toastIfNeeded(err);
@@ -380,6 +391,7 @@ export const useEditor = create<EditorState>()(
         tagline: s.tagline,
         shots: s.shots,
         provider: s.provider,
+        model: s.model,
         renders: s.renders,
       }),
       // Rehydrate on the client after mount (see Editor) to avoid SSR hydration mismatches.

@@ -59,7 +59,7 @@ describe("Editor DONE TEST", () => {
     fireEvent.click(screen.getByRole("button", { name: "Write my shots" }));
     await waitFor(() => expect(screen.getAllByRole("group", { name: /^Shot \d$/ })).toHaveLength(5));
     expect(fetchMock).toHaveBeenCalledWith("/api/shotlist", expect.objectContaining({ method: "POST" }));
-    expect(screen.getByText(/mock \(no LLM key\)/)).toBeTruthy();
+    expect(screen.getByText(/written by: mock/)).toBeTruthy();
 
     const before = preview(2);
     expect(before).not.toContain("cranes up");

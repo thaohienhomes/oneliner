@@ -1,10 +1,12 @@
 // @vitest-environment node
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { guardIP } from "../lib/ipGuard";
 import { MAX_TOTAL_SECONDS } from "../lib/renderConfig";
 import { ShotListSchema, shotToPrompt, totalSeconds } from "../lib/shot";
 import { activeProvider, finalizeDraft, generateShotList, mockShotList } from "../lib/shotList";
 
+// Never let a real key from the shell reach these tests (no network in `npm test`).
+beforeEach(() => vi.stubEnv("GROQ_API_KEY", ""));
 afterEach(() => vi.unstubAllEnvs());
 
 describe("provider selection", () => {

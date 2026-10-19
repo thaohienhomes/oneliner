@@ -49,13 +49,14 @@ const RULES: [RegExp, string][] = [
   [/\bstarbucks\b/gi, "a corner coffee shop"],
 ];
 
-export function guardIP(text: string): { text: string; replacements: Replacement[] } {
+/** `short`: insert only the stand-in's name ("the Nightwarden"), for length-capped fields like titles. */
+export function guardIP(text: string, opts: { short?: boolean } = {}): { text: string; replacements: Replacement[] } {
   const replacements: Replacement[] = [];
   let out = text;
   for (const [re, to] of RULES) {
     out = out.replace(re, (from) => {
       if (!replacements.some((r) => r.from.toLowerCase() === from.toLowerCase())) replacements.push({ from, to });
-      return to;
+      return opts.short ? shortName(to) : to;
     });
   }
   // Re-capitalize sentence starts that now begin with a lowercase stand-in ("the ...").

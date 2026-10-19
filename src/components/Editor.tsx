@@ -142,7 +142,7 @@ export function Editor() {
               <span className={total > MAX_TOTAL_SECONDS ? "text-red-400" : ""}>
                 {total}s / {MAX_TOTAL_SECONDS}s{total > MAX_TOTAL_SECONDS ? " — too long, trim a shot" : ""}
               </span>
-              {s.provider && <span>written by: {s.provider === "mock" ? "mock (no LLM key)" : "LLM"}</span>}
+              {s.provider && <span>written by: {s.provider === "mock" ? "mock" : `LLM${s.model ? ` (${s.model})` : ""}`}</span>}
             </p>
             <div className="flex flex-wrap items-center gap-3 pt-2">
               <button
