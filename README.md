@@ -161,6 +161,7 @@ Every variable in [`.env.example`](./.env.example), in the same order:
 | `NEXT_PUBLIC_SITE_URL` | blank = request host | Public origin for share links and `og:video` / `og:image`. |
 | `DAILY_RENDER_LIMIT` | `20` | Shots per IP per UTC day. |
 | `GLOBAL_DAILY_SHOTS` | `300` | Shots site-wide per UTC day. |
+| `DATABASE_URL` | blank | Neon Postgres connection string for the daily budget counters (`usage` table, see Cost guards). Takes priority over Upstash. |
 | `UPSTASH_REDIS_REST_URL` | blank = in-memory | Upstash Redis REST URL for shared budget counters across instances. |
 | `UPSTASH_REDIS_REST_TOKEN` | blank | Upstash Redis REST token. |
 | `DEMO_MODE` | blank | `1` = play pre-rendered sample clips instead of calling Comfy. |
@@ -172,9 +173,16 @@ Every Comfy render costs credits, so `POST /api/shot` runs these checks in order
 1. **Server-side validation** (`lib/shotRequest.ts`). Rejects, never clamps: durations outside 2 to 4 whole seconds, more than 6 shots per trailer, sizes above 768 on either side or above 768x448 pixels in total, prompts over 1200 characters.
 2. **Content filter** (`lib/contentFilter.ts`): a small PG-13 blocklist on the prompt.
 3. **`DEMO_MODE=1`**: returns sample clips, no Comfy call, no credits, no budget used.
-4. **Daily budget** (`lib/quota.ts`), checked before any Comfy call. Each shot counts against `DAILY_RENDER_LIMIT` (shots per IP per UTC day) and `GLOBAL_DAILY_SHOTS` (site-wide shots per UTC day). Over budget the API answers 429 "Daily studio budget used". Counters are in-memory per process by default, or shared in Upstash Redis when `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` are set.
+4. **Daily budget** (`lib/quota.ts`), checked before any Comfy call. Each shot counts against `DAILY_RENDER_LIMIT` (shots per IP per UTC day) and `GLOBAL_DAILY_SHOTS` (site-wide shots per UTC day). Over budget the API answers 429 "Daily studio budget used"; if the counter store is unreachable it answers 503 and nothing renders. The counter store is picked in this order:
+   - **Neon Postgres**, when `DATABASE_URL` is set (`@neondatabase/serverless` over HTTP, no pool). One atomic SQL statement per shot reads the per-IP row and the site-wide row (`ip = '__global__'`) for the UTC day, and increments both only if both stay within their limits; `INSERT ... ON CONFLICT DO UPDATE ... WHERE` rechecks each limit on the locked row, so concurrent requests can't overshoot. If a concurrent request fills one row in between, the statement can write just one row; that increment is undone right away and the request is denied. IPs are never stored: the `ip` column holds a salted SHA-256 hash (salt derived from `DATABASE_URL`). Table (`db/schema.sql`, create it once yourself):
+     ```sql
+     CREATE TABLE usage (ip text, day date, shots int DEFAULT 0, PRIMARY KEY (ip, day));
+     ```
+     Operator check: `npx tsx --env-file=.env.local scripts/counter-selftest.ts` writes to the fake day 2000-01-01 only (expects ok, ok, denied) and leaves its rows for you to inspect and delete.
+   - **Upstash Redis**, when `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` are set.
+   - **In-memory** per process otherwise (local dev; resets on restart).
 
-The hosted demo runs with **12 shots per IP and 12 shots site-wide per day**.
+The hosted demo runs with **12 shots per IP and 20 shots site-wide per day**, counted in Neon Postgres.
 
 **Content policy.** The shot-list system prompt requires original characters only (no real people, celebrities, brands or copyrighted franchises) and PG-13 content. A deterministic IP guard (`lib/ipGuard.ts`) also swaps well-known real people, brands and franchise characters for original stand-ins, on the logline before any model sees it, on the generated shot list, and again on published titles and text.
 
