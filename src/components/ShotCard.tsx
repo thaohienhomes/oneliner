@@ -6,6 +6,7 @@ import type { Shot } from "../../lib/shot";
 import { CAMERA_MOVES, LENS_FOV, LENSES, SHOT_TYPES, shotToPrompt, type ShotType } from "../../lib/shotPresets";
 import { useEditor } from "../store/editorStore";
 import { CameraMoveIcon } from "./CameraMoveIcon";
+import { RenderPanel } from "./RenderPanel";
 
 const label = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
@@ -102,13 +103,8 @@ export function ShotCard({ shot, index, count, aspect, dragIndex, onDragStart, o
         </span>
       </div>
 
-      {/* Frame placeholder (no render in this build) */}
-      <div
-        className={`frame mx-auto flex w-full items-end justify-between rounded-lg border border-white/10 p-2 ${aspect === "9:16" ? "aspect-[9/16] max-w-[45%]" : "aspect-video"}`}
-      >
-        <span className="font-mono text-[10px] uppercase tracking-widest text-white/40">{shot.shotType}</span>
-        <span className="font-mono text-[10px] text-white/40">{shot.seconds}s</span>
-      </div>
+      {/* Frame: placeholder, render status, or the finished clip */}
+      <RenderPanel shot={shot} n={n} aspect={aspect} />
 
       {/* Action */}
       <label className="flex flex-col gap-1">

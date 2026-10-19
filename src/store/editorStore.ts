@@ -2,11 +2,33 @@
 
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
-import { DEFAULT_ASPECT, SHOT_COUNT, SHOT_SECONDS, type Aspect } from "../../lib/renderConfig";
+import { createLimiter, type Limiter } from "../../lib/limiter";
+import { DEFAULT_ASPECT, MAX_CONCURRENT_RENDERS, RENDER_SIZE, SHOT_COUNT, SHOT_SECONDS, type Aspect } from "../../lib/renderConfig";
 import type { Shot } from "../../lib/shot";
+import { shotToPrompt } from "../../lib/shotPresets";
 
 export type Provider = "mock" | "llm";
 type Status = "idle" | "loading" | "error";
+
+export type RenderState = "queued" | "rendering" | "done" | "failed";
+
+/** Per-shot render, persisted so a reload resumes polling by job id. */
+export type ShotRender = {
+  state: RenderState;
+  seed: number;
+  /** Comfy I2V job id. Once set, the shot is never re-POSTed except via Retry/Re-render. */
+  jobId?: string;
+  frameJobId?: string;
+  /** 0..1 when Comfy reports it. */
+  progress?: number;
+  queuePosition?: number;
+  /** ms epoch: POST sent / terminal state reached. */
+  startedAt?: number;
+  finishedAt?: number;
+  /** Re-hosted clip URL (Blob or /renders/...), never the short-lived Comfy signed URL. */
+  clipUrl?: string;
+  error?: string;
+};
 
 export type EditorData = {
   logline: string;
@@ -15,6 +37,7 @@ export type EditorData = {
   tagline: string;
   shots: Shot[];
   provider: Provider | null;
+  renders: Record<string, ShotRender>;
 };
 
 type EditorState = EditorData & {
@@ -33,6 +56,14 @@ type EditorState = EditorData & {
   moveShot: (from: number, to: number) => void;
   generate: () => Promise<void>;
   regenerateShot: (id: string) => Promise<void>;
+  /** Start every shot that has never been rendered; resume polling for in-flight ones. */
+  renderTrailer: () => void;
+  /** After rehydration: poll persisted job ids (zero POSTs). */
+  resumeRenders: () => void;
+  /** Failed shot: new job, same seed. */
+  retryShot: (id: string) => void;
+  /** Any shot: new job, same or new seed. */
+  reRenderShot: (id: string, opts?: { newSeed?: boolean }) => void;
   reset: () => void;
 };
 
@@ -43,7 +74,29 @@ export const INITIAL_DATA: EditorData = {
   tagline: "",
   shots: [],
   provider: null,
+  renders: {},
 };
+
+/** Overridable in tests. */
+export const renderTuning = { pollMs: 4000, maxPollErrors: 5 };
+
+/* Render runtime (not persisted): one limiter per page, one current task token per shot. */
+let limiter: Limiter = createLimiter(MAX_CONCURRENT_RENDERS);
+const tokens = new Map<string, number>();
+const running = new Set<string>();
+
+/** Test helper: drop in-flight tasks and start a fresh limiter. */
+export function resetRenderRuntime() {
+  limiter = createLimiter(MAX_CONCURRENT_RENDERS);
+  tokens.clear();
+  running.clear();
+}
+
+export const newSeed = () => Math.floor(Math.random() * 2 ** 31);
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const errMsg = (err: unknown) => (err instanceof Error ? err.message : String(err));
+
+type JobStatusResponse = { status: string; progress?: number; queuePosition?: number; error?: string };
 
 export const STORAGE_KEY = "oneliner-editor";
 
@@ -59,9 +112,104 @@ async function postJson<T>(url: string, body: unknown): Promise<T> {
 // Track how many times each shot was regenerated so the mock returns a new line each click.
 const regenCount = new Map<string, number>();
 
+async function getJson<T>(url: string): Promise<T> {
+  const res = await fetch(url);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data?.message ?? data?.error ?? `Request failed (${res.status})`);
+  return data as T;
+}
+
 export const useEditor = create<EditorState>()(
   persist(
-    (set, get) => ({
+    (set, get) => {
+      const patchRender = (id: string, patch: Partial<ShotRender>) =>
+        set((s) => (s.renders[id] ? { renders: { ...s.renders, [id]: { ...s.renders[id], ...patch } } } : s));
+
+      /** One shot: POST (only if it has no job id yet), then poll to a terminal state and re-host. */
+      const runShot = async (id: string, token: number) => {
+        const current = () => tokens.get(id) === token && !!get().renders[id];
+        if (!current()) return;
+
+        if (!get().renders[id].jobId) {
+          const shot = get().shots.find((x) => x.id === id);
+          if (!shot) return;
+          const { aspect } = get();
+          patchRender(id, { state: "queued", startedAt: Date.now(), finishedAt: undefined, error: undefined });
+          try {
+            const res = await postJson<{ videoJobId: string; frameJobId: string }>("/api/shot", {
+              prompt: shotToPrompt(shot),
+              seed: get().renders[id].seed,
+              aspect,
+              ...RENDER_SIZE[aspect],
+              seconds: shot.seconds,
+            });
+            if (!current()) return; // superseded by Retry/Re-render or deleted while submitting
+            patchRender(id, { jobId: res.videoJobId, frameJobId: res.frameJobId });
+          } catch (err) {
+            if (current()) patchRender(id, { state: "failed", error: errMsg(err), finishedAt: Date.now() });
+            return;
+          }
+        }
+
+        const jobId = get().renders[id].jobId!;
+        let errors = 0;
+        while (current()) {
+          let st: JobStatusResponse;
+          try {
+            st = await getJson<JobStatusResponse>(`/api/shot/${encodeURIComponent(jobId)}`);
+            errors = 0;
+          } catch (err) {
+            if (++errors >= renderTuning.maxPollErrors) {
+              if (current()) patchRender(id, { state: "failed", error: `Lost track of job: ${errMsg(err)}`, finishedAt: Date.now() });
+              return;
+            }
+            await sleep(renderTuning.pollMs);
+            continue;
+          }
+          if (!current()) return;
+
+          if (st.status === "succeeded") {
+            try {
+              const { url } = await postJson<{ url: string }>(`/api/shot/${encodeURIComponent(jobId)}/rehost`, {});
+              if (current()) patchRender(id, { state: "done", clipUrl: url, progress: 1, finishedAt: Date.now() });
+            } catch (err) {
+              if (current()) patchRender(id, { state: "failed", error: `Rendered, but saving the clip failed: ${errMsg(err)}`, finishedAt: Date.now() });
+            }
+            return;
+          }
+          if (st.status === "failed" || st.status === "canceled" || st.status === "expired") {
+            patchRender(id, { state: "failed", error: st.error ?? `Job ${st.status}`, finishedAt: Date.now() });
+            return;
+          }
+          patchRender(id, {
+            state: st.status === "queued" ? "queued" : "rendering",
+            progress: typeof st.progress === "number" ? st.progress : undefined,
+            queuePosition: st.queuePosition,
+          });
+          await sleep(renderTuning.pollMs);
+        }
+      };
+
+      /** Queue a (new) task for a shot; supersedes any older task for the same shot. */
+      const enqueue = (id: string) => {
+        const token = (tokens.get(id) ?? 0) + 1;
+        tokens.set(id, token);
+        running.add(id);
+        void limiter
+          .run(() => runShot(id, token))
+          .catch((err) => patchRender(id, { state: "failed", error: errMsg(err), finishedAt: Date.now() }))
+          .finally(() => {
+            if (tokens.get(id) === token) running.delete(id);
+          });
+      };
+
+      const restart = (id: string, seed: number) => {
+        set((s) => ({ renders: { ...s.renders, [id]: { state: "queued", seed } } }));
+        enqueue(id);
+      };
+
+      return {
+      ...INITIAL_DATA,
       ...INITIAL_DATA,
       status: "idle",
       error: null,
@@ -89,7 +237,14 @@ export const useEditor = create<EditorState>()(
           return { shots: [...s.shots, shot] };
         }),
 
-      deleteShot: (id) => set((s) => ({ shots: s.shots.filter((x) => x.id !== id) })),
+      deleteShot: (id) =>
+        set((s) => {
+          tokens.delete(id);
+          running.delete(id);
+          const renders = { ...s.renders };
+          delete renders[id];
+          return { shots: s.shots.filter((x) => x.id !== id), renders };
+        }),
 
       moveShot: (from, to) =>
         set((s) => {
@@ -112,7 +267,8 @@ export const useEditor = create<EditorState>()(
             logline,
             aspect,
           });
-          set({ title: data.title, tagline: data.tagline, shots: data.shots, provider: data.provider, status: "idle" });
+          // New shot ids: old renders belong to the previous list (their tasks stop on their own).
+          set({ title: data.title, tagline: data.tagline, shots: data.shots, provider: data.provider, status: "idle", renders: {} });
         } catch (err) {
           set({ status: "error", error: err instanceof Error ? err.message : String(err) });
         }
@@ -141,8 +297,46 @@ export const useEditor = create<EditorState>()(
         }
       },
 
-      reset: () => set({ ...INITIAL_DATA, status: "idle", error: null, regenerating: {} }),
-    }),
+      renderTrailer: () => {
+        const { shots, renders } = get();
+        for (const shot of shots) {
+          const r = renders[shot.id];
+          if (!r) restart(shot.id, newSeed());
+          // Has a job id and isn't finished: poll it, never re-POST.
+          else if (r.jobId && (r.state === "queued" || r.state === "rendering") && !running.has(shot.id)) enqueue(shot.id);
+          // done / failed / already running: leave alone (Retry / Re-render are explicit).
+        }
+      },
+
+      resumeRenders: () => {
+        for (const [id, r] of Object.entries(get().renders)) {
+          if (r.state !== "queued" && r.state !== "rendering") continue;
+          if (running.has(id)) continue;
+          if (r.jobId) enqueue(id);
+          else
+            // The page went away before /api/shot answered; don't silently spend credits again.
+            patchRender(id, { state: "failed", error: "Interrupted before the job was submitted. Click Retry.", finishedAt: Date.now() });
+        }
+      },
+
+      retryShot: (id) => {
+        const r = get().renders[id];
+        if (!get().shots.some((x) => x.id === id)) return;
+        restart(id, r?.seed ?? newSeed());
+      },
+
+      reRenderShot: (id, opts) => {
+        const r = get().renders[id];
+        if (!get().shots.some((x) => x.id === id)) return;
+        restart(id, opts?.newSeed || !r ? newSeed() : r.seed);
+      },
+
+      reset: () => {
+        resetRenderRuntime();
+        set({ ...INITIAL_DATA, status: "idle", error: null, regenerating: {} });
+      },
+      };
+    },
     {
       name: STORAGE_KEY,
       version: 1,
@@ -154,6 +348,7 @@ export const useEditor = create<EditorState>()(
         tagline: s.tagline,
         shots: s.shots,
         provider: s.provider,
+        renders: s.renders,
       }),
       // Rehydrate on the client after mount (see Editor) to avoid SSR hydration mismatches.
       skipHydration: true,

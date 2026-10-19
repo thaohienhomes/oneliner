@@ -11,12 +11,17 @@ export function Editor() {
   const [dragIndex, setDragIndex] = useState<number | null>(null);
 
   // Persisted state is restored after mount so server and first client render match.
+  // Then resume polling any persisted job ids (no new POSTs).
   useEffect(() => {
-    void useEditor.persist.rehydrate();
+    void Promise.resolve(useEditor.persist.rehydrate()).then(() => useEditor.getState().resumeRenders());
   }, []);
 
   const total = totalSeconds(s.shots);
   const loading = s.status === "loading";
+  const renders = s.shots.map((x) => s.renders[x.id]);
+  const doneCount = renders.filter((r) => r?.state === "done").length;
+  const activeCount = renders.filter((r) => r?.state === "queued" || r?.state === "rendering").length;
+  const unrendered = renders.filter((r) => !r).length;
 
   return (
     <main className="relative z-10 mx-auto flex min-h-screen w-full max-w-[1400px] flex-col gap-8 px-4 py-6 sm:px-8 sm:py-10">
@@ -100,6 +105,21 @@ export function Editor() {
               </span>
               {s.provider && <span>written by: {s.provider === "mock" ? "mock (no LLM key)" : "LLM"}</span>}
             </p>
+            <div className="flex flex-wrap items-center gap-3 pt-2">
+              <button
+                type="button"
+                onClick={s.renderTrailer}
+                disabled={unrendered === 0 || total > MAX_TOTAL_SECONDS}
+                className="rounded-xl bg-amber-400 px-5 py-2.5 font-semibold text-black transition hover:bg-amber-300 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Render trailer
+              </button>
+              {renders.some(Boolean) && (
+                <span className="font-mono text-xs text-white/50" aria-live="polite">
+                  {doneCount}/{s.shots.length} clips done{activeCount ? ` · ${activeCount} in progress` : ""}
+                </span>
+              )}
+            </div>
           </section>
 
           {/* Storyboard */}

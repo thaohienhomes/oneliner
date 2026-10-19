@@ -20,6 +20,9 @@
 # production
 /build
 
+# re-hosted clips in local dev (lib/rehost.ts; Vercel Blob in prod)
+/public/renders/
+
 # misc
 .DS_Store
 *.pem

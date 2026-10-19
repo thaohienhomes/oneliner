@@ -23,3 +23,9 @@ export const MAX_TOTAL_SECONDS = 13;
 
 /** Matches the "Frame Rate" default (320:300) in the LTX-2.3 workflow. */
 export const FPS = 25;
+
+/** Frames LTX is asked for (the workflow derives length = Duration * FPS + 1). */
+export const ltxFrames = (seconds: number) => Math.round(seconds) * FPS + 1;
+
+/** Max Comfy render jobs in flight at once from one editor. */
+export const MAX_CONCURRENT_RENDERS = 3;
