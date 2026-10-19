@@ -5,6 +5,7 @@
  */
 import { mkdirSync } from "node:fs";
 import { comfyTarget } from "../lib/comfy";
+import { pickVideoOutput } from "../lib/outputs";
 import { RENDER_SIZE } from "../lib/renderConfig";
 import { getFirstFrame, renderFirstFrame, renderShot, snapVideoSize, waitForJob, RenderError } from "../lib/renderShot";
 import { I2V, I2V_HAS_AUDIO, T2I, UNKNOWNS } from "../lib/workflowMap";
@@ -50,8 +51,11 @@ async function main() {
   });
   console.log(`\n[I2V] job id: ${shotJobId}`);
   const shotJob = await waitForJob(shotJobId, 20 * 60_000);
-  const video = shotJob.getOutputs(I2V.saveVideo.id).find((o) => o.type === "video") ?? shotJob.outputs.find((o) => o.type === "video");
-  if (!video) throw new RenderError("job_failed", `I2V job ${shotJobId} produced no video output.`);
+  const video = pickVideoOutput(shotJob.outputs, I2V.saveVideo.id);
+  if (!video) {
+    const seen = shotJob.outputs.map((o) => ({ node: o.nodeId, name: o.name, type: o.type, contentType: o.contentType }));
+    throw new RenderError("job_failed", `I2V job ${shotJobId} produced no video output. Outputs: ${JSON.stringify(seen)}`);
+  }
   await video.toFile("out/test-shot.mp4");
   const t2 = t();
   console.log(`[I2V] done in ${secs(t2 - t1)} -> out/test-shot.mp4 (${video.sizeBytes} bytes, ${video.contentType})`);

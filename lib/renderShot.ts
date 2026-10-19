@@ -15,6 +15,7 @@ import {
   type Workflow,
 } from "@comfyorg/sdk";
 import { getComfy } from "./comfy";
+import { pickImageOutput, pickVideoOutput } from "./outputs";
 import { I2V, I2V_FILE, T2I, T2I_FILE, type NodeRef } from "./workflowMap";
 
 /* ------------------------------------------------------------------ */
@@ -153,7 +154,7 @@ export type FirstFrame = { jobId: string; assetId: string; url: string; expiresA
 export async function getFirstFrame(jobId: string, timeoutMs = 5 * 60_000): Promise<FirstFrame> {
   try {
     const job = await waitForJob(jobId, timeoutMs);
-    const output = job.getOutputs(T2I.saveImage.id).find((o) => o.type === "image");
+    const output = pickImageOutput(job.getOutputs(T2I.saveImage.id));
     if (!output) throw new RenderError("job_failed", `T2I job ${jobId} succeeded but node ${T2I.saveImage.id} produced no image.`, 502);
     const { url, expiresAt } = await output.getDownloadUrl();
     return { jobId, assetId: output.id, url, expiresAt, output };
@@ -235,11 +236,12 @@ export async function getJobStatus(jobId: string): Promise<JobStatus> {
     if (job.metrics) res.metrics = job.metrics;
     if (job.status === "failed" && job.error) res.error = job.error.message;
     if (job.status === "succeeded") {
-      const out = job.outputs.find((o) => o.type === "video") ?? job.outputs.find((o) => o.type === "image");
+      // Comfy labels SaveVideo mp4s type "image"; pick by content type (see lib/outputs.ts).
+      const out = pickVideoOutput(job.outputs, I2V.saveVideo.id);
       if (out) {
         const { url, expiresAt } = await out.getDownloadUrl();
         res.outputUrl = url;
-        res.outputType = out.type;
+        res.outputType = out.contentType || out.type;
         res.outputExpiresAt = expiresAt?.toISOString() ?? null;
       }
     }
