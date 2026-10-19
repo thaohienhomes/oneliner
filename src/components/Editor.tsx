@@ -4,8 +4,17 @@ import { useEffect, useState } from "react";
 import { ASPECTS, MAX_TOTAL_SECONDS, SHOT_COUNT } from "../../lib/renderConfig";
 import { totalSeconds } from "../../lib/shotPresets";
 import { useEditor } from "../store/editorStore";
+import { FilmSlate } from "./FilmSlate";
+import { HowItWasMade } from "./HowItWasMade";
 import { ShotCard } from "./ShotCard";
 import { StitchPanel } from "./StitchPanel";
+import { Toaster } from "./Toaster";
+
+const EXAMPLES = [
+  "A retired robot opens a noodle shop on Mars",
+  "A lighthouse keeper finds a door at the bottom of the sea",
+  "Two rival grandmothers enter the same baking contest",
+];
 
 export function Editor() {
   const s = useEditor();
@@ -29,20 +38,23 @@ export function Editor() {
       {/* Top bar */}
       <header className="flex flex-wrap items-center justify-between gap-4">
         <h1 className="font-mono text-sm font-semibold uppercase tracking-[0.45em] text-amber-400">Oneliner</h1>
-        <div role="radiogroup" aria-label="Aspect ratio" className="flex rounded-full border border-white/15 p-1">
-          {ASPECTS.map((a) => (
-            <button
-              key={a}
-              type="button"
-              role="radio"
-              aria-checked={s.aspect === a}
-              onClick={() => s.setAspect(a)}
-              className="flex items-center gap-2 rounded-full px-3 py-1.5 font-mono text-xs text-white/60 transition aria-checked:bg-amber-400 aria-checked:text-black"
-            >
-              <span aria-hidden className={`inline-block border border-current ${a === "16:9" ? "h-2.5 w-4" : "h-4 w-2.5"}`} />
-              {a}
-            </button>
-          ))}
+        <div className="flex items-center gap-4">
+          <HowItWasMade />
+          <div role="radiogroup" aria-label="Aspect ratio" className="flex rounded-full border border-white/15 p-1">
+            {ASPECTS.map((a) => (
+              <button
+                key={a}
+                type="button"
+                role="radio"
+                aria-checked={s.aspect === a}
+                onClick={() => s.setAspect(a)}
+                className="flex items-center gap-2 rounded-full px-3 py-1.5 font-mono text-xs text-white/60 transition aria-checked:bg-amber-400 aria-checked:text-black"
+              >
+                <span aria-hidden className={`inline-block border border-current ${a === "16:9" ? "h-2.5 w-4" : "h-4 w-2.5"}`} />
+                {a}
+              </button>
+            ))}
+          </div>
         </div>
       </header>
 
@@ -74,6 +86,9 @@ export function Editor() {
             {loading ? "Writing…" : "Write my shots"}
           </button>
         </form>
+        <p className="font-mono text-[11px] text-white/35">
+          Press <kbd className="rounded border border-white/20 px-1">Enter</kbd> to write the shot list.
+        </p>
         {s.error && (
           <p role="alert" className="text-sm text-red-400">
             {s.error}
@@ -81,7 +96,30 @@ export function Editor() {
         )}
       </section>
 
-      {s.shots.length > 0 && (
+      {loading && <FilmSlate label="Writing your shot list" />}
+
+      {!loading && s.shots.length === 0 && (
+        <section aria-label="Examples" className="flex flex-col gap-3 rounded-2xl border border-dashed border-white/10 p-6">
+          <p className="text-sm text-white/50">No shots yet. One sentence is all it takes — try one of these:</p>
+          <div className="flex flex-wrap gap-2">
+            {EXAMPLES.map((ex) => (
+              <button
+                key={ex}
+                type="button"
+                className="chip"
+                onClick={() => {
+                  s.setLogline(ex);
+                  void s.generate();
+                }}
+              >
+                {ex}
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {s.shots.length > 0 && !loading && (
         <>
           {/* Title + tagline */}
           <section className="flex flex-col gap-2 border-t border-white/10 pt-6">
@@ -152,6 +190,7 @@ export function Editor() {
           </section>
         </>
       )}
+      <Toaster />
     </main>
   );
 }

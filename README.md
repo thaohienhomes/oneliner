@@ -26,6 +26,14 @@ _TODO: link to the deployed app._
 
 4. **Publish & share** — "Publish" uploads the MP4, a poster (first frame) and `trailers/{id}.json` (title, tagline, logline, shots with prompts/presets, aspect, videoUrl, createdAt) under a short nanoid. Vercel Blob when `BLOB_READ_WRITE_TOKEN` is set, otherwise a local adapter (`public/trailers/`, served by `/media/trailers/[file]` with Range support). `/t/[id]` has the player, director's notes, Download MP4, Copy link and share-intent buttons for X / Reddit / LinkedIn (prefilled with #OpenSourceHiggsfield; nothing is posted automatically), plus og:video / og:image tags. The home page shows the 6 most recent trailers.
 
+### Cost guard & safety
+
+- **Daily budget** — every shot render counts against a per-IP `DAILY_RENDER_LIMIT` and a site-wide `GLOBAL_DAILY_SHOTS` (Upstash Redis when `UPSTASH_REDIS_REST_URL`/`TOKEN` are set, in-memory otherwise). Over budget, `POST /api/shot` answers 429 "Daily studio budget used — watch the gallery or run it locally" before any Comfy call.
+- **Server validation** — `POST /api/shot` rejects (never clamps) shots outside 2–4 whole seconds, a 7th shot, sizes above `I2V_MAX_SIZE` (lib/workflowMap.ts), and prompts over 1200 characters.
+- **Content** — PG-13 rules in the shot-list system prompt, a small deterministic filter (lib/contentFilter.ts), and the real-name/brand/franchise guard (lib/ipGuard.ts).
+- **`DEMO_MODE=1`** — plays the sample clips in `public/samples/` instead of calling Comfy (no credits, no budget used).
+- Friendly toasts for 401 / out of credits / timeouts / budget; API errors never include raw SDK messages or stack traces (details go to the server log).
+
 _TODO: diagram._
 
 ## Run locally
@@ -48,6 +56,7 @@ npx tsx scripts/check-shotlist.ts http://localhost:3000   # API smoke test again
 npx tsx scripts/stitch-test.ts                   # stitch filter graph with native ffmpeg + ffprobe checks (no credits)
 npx tsx scripts/stitch-browser.ts http://localhost:3100   # same, through the real UI + ffmpeg.wasm in headless Edge/Chrome
 npx tsx scripts/stitch-browser.ts http://localhost:3100 --publish   # + Publish, then curl the share page / MP4 / gallery
+npm run build && npx tsx scripts/cost-guard-e2e.ts   # DAILY_RENDER_LIMIT=2 against a fake local Comfy (zero credits)
 ```
 
 The stitcher's ffmpeg arguments live in `lib/stitchPlan.ts` and are shared by the browser and both scripts. ffmpeg.wasm uses the single-threaded core from unpkg (no COOP/COEP headers needed); its worker is copied unbundled to `public/ffmpeg/` on `predev`/`prebuild`, because bundling it breaks the core's dynamic import.

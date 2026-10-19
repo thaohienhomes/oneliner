@@ -69,6 +69,13 @@ export const I2V = {
 } as const satisfies Record<string, NodeRef>;
 
 /**
+ * Largest output the I2V workflow is allowed to render (server validation in
+ * POST /api/shot). Our presets are 768x448 / 448x768 (lib/renderConfig.ts);
+ * anything bigger costs more credits and is rejected.
+ */
+export const I2V_MAX_SIZE = { width: 768, height: 768, pixels: 768 * 448 } as const;
+
+/**
  * LTX-2.3 outputs AUDIO: "320:305" LTXVEmptyLatentAudio + "320:297"
  * LTXVAudioVAEDecode feed "320:310" CreateVideo.audio, so the saved video
  * carries a generated audio track alongside the frames.

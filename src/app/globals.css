@@ -175,7 +175,52 @@ body::after {
   60%, 100% { transform: translateX(6px) scaleX(1); }
 }
 
+/* Film slate (loading) */
+.slate {
+  position: relative;
+  width: 112px;
+  padding-top: 14px;
+}
+.slate-clapper {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 16px;
+  border-radius: 3px 3px 0 0;
+  background: repeating-linear-gradient(-55deg, #f5e6c8 0 10px, #111 10px 20px);
+  transform-origin: 4px 100%;
+  animation: clap 1.1s cubic-bezier(0.6, 0, 0.4, 1) infinite;
+}
+.slate-body {
+  display: flex;
+  justify-content: space-between;
+  height: 64px;
+  margin-top: 4px;
+  padding: 10px 8px;
+  border-radius: 0 0 4px 4px;
+  background: #111;
+  border: 1px solid rgb(255 255 255 / 0.15);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 9px;
+  letter-spacing: 0.15em;
+  color: rgb(255 255 255 / 0.55);
+}
+@keyframes clap {
+  0%, 15% { transform: rotate(-24deg); }
+  35%, 100% { transform: rotate(0deg); }
+}
+.toast-in {
+  animation: toast-in 0.25s ease-out;
+}
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+
 @media (prefers-reduced-motion: reduce) {
+  .slate-clapper,
+  .toast-in,
   body::after,
   .cam-subject {
     animation: none !important;

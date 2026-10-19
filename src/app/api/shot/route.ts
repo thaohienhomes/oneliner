@@ -1,49 +1,70 @@
 import { NextResponse } from "next/server";
-import { DEFAULT_ASPECT, RENDER_SIZE, SHOT_SECONDS, type Aspect } from "../../../../lib/renderConfig";
-import { getFirstFrame, renderFirstFrame, renderShot, snapVideoSize, toRenderError } from "../../../../lib/renderShot";
+import { z } from "zod";
+import { CONTENT_MESSAGE, contentViolation } from "../../../../lib/contentFilter";
+import { demoJobId, demoMode } from "../../../../lib/demo";
+import { clientIp, takeShotQuota } from "../../../../lib/quota";
+import { RENDER_SIZE } from "../../../../lib/renderConfig";
+import { getFirstFrame, renderFirstFrame, renderShot, snapVideoSize, toPublicError } from "../../../../lib/renderShot";
+import { ShotRequestSchema } from "../../../../lib/shotRequest";
+import { I2V_MAX_SIZE } from "../../../../lib/workflowMap";
 
 // T2I must finish before I2V can be submitted (it needs the frame), so this
 // route waits for the frame (Z-Image-Turbo, ~seconds) and returns once the
 // video job is queued. Poll GET /api/shot/{videoJobId} for the result.
+//
+// Order matters (cost guard): validate -> content filter -> demo mode ->
+// daily budget -> Comfy. A refused request never reaches Comfy.
 export const maxDuration = 300;
 
-type Body = {
-  prompt?: unknown;
-  negative?: unknown;
-  seed?: unknown;
-  width?: unknown;
-  height?: unknown;
-  seconds?: unknown;
-  aspect?: unknown;
-};
-
-const num = (v: unknown, fallback: number) => (typeof v === "number" && Number.isFinite(v) ? v : fallback);
-
 export async function POST(req: Request) {
-  let body: Body;
+  let json: unknown;
   try {
-    body = (await req.json()) as Body;
+    json = await req.json();
   } catch {
-    return NextResponse.json({ error: "invalid_json" }, { status: 400 });
+    return NextResponse.json({ error: "invalid_json", message: "Expected a JSON body." }, { status: 400 });
   }
-  if (typeof body.prompt !== "string" || !body.prompt.trim())
-    return NextResponse.json({ error: "prompt is required" }, { status: 400 });
+  const parsed = ShotRequestSchema.safeParse(json);
+  if (!parsed.success)
+    return NextResponse.json({ error: "invalid_request", message: z.prettifyError(parsed.error) }, { status: 400 });
+  const r = parsed.data;
 
-  const prompt = body.prompt.trim();
-  const negative = typeof body.negative === "string" ? body.negative : undefined;
-  const seed = typeof body.seed === "number" ? Math.floor(body.seed) : undefined;
-  const aspect: Aspect = body.aspect === "9:16" ? "9:16" : DEFAULT_ASPECT;
-  const size = RENDER_SIZE[aspect];
-  const { width, height } = snapVideoSize(num(body.width, size.width), num(body.height, size.height));
-  const seconds = Math.min(SHOT_SECONDS.max, Math.max(SHOT_SECONDS.min, Math.round(num(body.seconds, SHOT_SECONDS.default))));
+  const size = RENDER_SIZE[r.aspect];
+  const { width, height } = snapVideoSize(r.width ?? size.width, r.height ?? size.height);
+  if (width > I2V_MAX_SIZE.width || height > I2V_MAX_SIZE.height || width * height > I2V_MAX_SIZE.pixels)
+    return NextResponse.json({ error: "invalid_request", message: `Resolution ${width}x${height} is above the max.` }, { status: 400 });
+
+  if (contentViolation(r.prompt)) return NextResponse.json({ error: "content_blocked", message: CONTENT_MESSAGE }, { status: 422 });
+
+  if (demoMode()) {
+    // Pre-rendered samples: no Comfy, no credits, no budget used.
+    const videoJobId = demoJobId(r.seed, r.prompt);
+    return NextResponse.json({ frameJobId: videoJobId, videoJobId, width, height, seconds: r.seconds, demo: true });
+  }
+
+  let quota;
+  try {
+    quota = await takeShotQuota(clientIp(req.headers));
+  } catch (err) {
+    console.error("[shot] budget counter unavailable:", err instanceof Error ? err.message : err);
+    return NextResponse.json({ error: "budget_unavailable", message: "The studio is busy. Try again in a minute." }, { status: 503 });
+  }
+  if (!quota.ok) return NextResponse.json({ error: "daily_limit", scope: quota.scope, message: quota.message }, { status: 429 });
 
   try {
-    const frameJobId = await renderFirstFrame({ prompt, seed, width, height });
+    const frameJobId = await renderFirstFrame({ prompt: r.prompt, seed: r.seed, width, height });
     const frame = await getFirstFrame(frameJobId, 4 * 60_000);
-    const videoJobId = await renderShot({ prompt, negative, seed, width, height, seconds, imageRef: frame.assetId });
-    return NextResponse.json({ frameJobId, videoJobId, frameUrl: frame.url, width, height, seconds });
+    const videoJobId = await renderShot({
+      prompt: r.prompt,
+      negative: r.negative,
+      seed: r.seed,
+      width,
+      height,
+      seconds: r.seconds,
+      imageRef: frame.assetId,
+    });
+    return NextResponse.json({ frameJobId, videoJobId, frameUrl: frame.url, width, height, seconds: r.seconds });
   } catch (err) {
-    const e = toRenderError(err);
-    return NextResponse.json({ error: e.code, message: e.message }, { status: e.httpStatus });
+    const e = toPublicError(err, "shot");
+    return NextResponse.json(e.body, { status: e.status });
   }
 }

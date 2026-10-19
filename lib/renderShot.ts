@@ -82,6 +82,30 @@ export function toRenderError(err: unknown): RenderError {
   return new RenderError("unknown", err instanceof Error ? err.message : String(err));
 }
 
+/**
+ * What the browser sees: a short friendly message per code, never a raw SDK
+ * message or stack trace. Details go to the server log only.
+ */
+const PUBLIC_MESSAGES: Partial<Record<RenderErrorCode, string>> = {
+  missing_credentials: "The studio isn't connected to Comfy right now. Try again later or run it locally.",
+  unauthorized: "The studio's Comfy key was rejected (401). We're on it — try again later or run it locally.",
+  forbidden: "Comfy refused this render (403). Try again later or run it locally.",
+  insufficient_credits: "The studio is out of Comfy credits for today — watch the gallery or run it locally.",
+  timeout: "Comfy took too long to answer. Hit Retry in a moment.",
+  job_failed: "Comfy couldn't finish this shot. Hit Retry, or tweak the shot and re-render.",
+  invalid_workflow: "The render workflow was rejected by Comfy. Try again later.",
+  missing_asset: "The first frame for this shot went missing. Hit Retry.",
+  missing_node: "The render workflow is out of date on the server. Try again later.",
+  not_found: "That render job no longer exists. Hit Re-render.",
+  unknown: "Something went wrong while rendering. Hit Retry.",
+};
+
+export function toPublicError(err: unknown, where: string) {
+  const e = toRenderError(err);
+  console.error(`[${where}] ${e.code}: ${e.message}`);
+  return { body: { error: e.code, message: PUBLIC_MESSAGES[e.code] ?? PUBLIC_MESSAGES.unknown! }, status: e.httpStatus };
+}
+
 /* ------------------------------------------------------------------ */
 /* Workflow helpers                                                    */
 /* ------------------------------------------------------------------ */

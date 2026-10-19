@@ -6,6 +6,7 @@ import { createLimiter, type Limiter } from "../../lib/limiter";
 import { DEFAULT_ASPECT, MAX_CONCURRENT_RENDERS, RENDER_SIZE, SHOT_COUNT, SHOT_SECONDS, type Aspect } from "../../lib/renderConfig";
 import type { Shot } from "../../lib/shot";
 import { shotToPrompt } from "../../lib/shotPresets";
+import { toastForError } from "./toastStore";
 
 export type Provider = "mock" | "llm";
 type Status = "idle" | "loading" | "error";
@@ -102,22 +103,42 @@ export const STORAGE_KEY = "oneliner-editor";
 
 const newId = () => `shot-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 
-async function postJson<T>(url: string, body: unknown): Promise<T> {
-  const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+/** API error with our server's error code (e.g. "daily_limit", "insufficient_credits"). */
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly code?: string,
+    readonly status?: number,
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
+async function request<T>(url: string, init?: RequestInit): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetch(url, init);
+  } catch {
+    throw new ApiError("Couldn't reach the studio. Check your connection and retry.", "network");
+  }
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data?.message ?? data?.error ?? `Request failed (${res.status})`);
+  if (!res.ok) throw new ApiError(data?.message ?? `Request failed (${res.status})`, data?.error, res.status);
   return data as T;
 }
+
+const postJson = <T,>(url: string, body: unknown) =>
+  request<T>(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+
+/** Toast the errors a user should notice even when the shot card is off-screen. */
+const toastIfNeeded = (err: unknown) => {
+  if (err instanceof ApiError) toastForError(err.code, err.message);
+};
 
 // Track how many times each shot was regenerated so the mock returns a new line each click.
 const regenCount = new Map<string, number>();
 
-async function getJson<T>(url: string): Promise<T> {
-  const res = await fetch(url);
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data?.message ?? data?.error ?? `Request failed (${res.status})`);
-  return data as T;
-}
+const getJson = <T,>(url: string) => request<T>(url);
 
 export const useEditor = create<EditorState>()(
   persist(
@@ -142,11 +163,15 @@ export const useEditor = create<EditorState>()(
               aspect,
               ...RENDER_SIZE[aspect],
               seconds: shot.seconds,
+              shotIndex: get().shots.findIndex((x) => x.id === id),
             });
             if (!current()) return; // superseded by Retry/Re-render or deleted while submitting
             patchRender(id, { jobId: res.videoJobId, frameJobId: res.frameJobId });
           } catch (err) {
-            if (current()) patchRender(id, { state: "failed", error: errMsg(err), finishedAt: Date.now() });
+            if (current()) {
+              patchRender(id, { state: "failed", error: errMsg(err), finishedAt: Date.now() });
+              toastIfNeeded(err);
+            }
             return;
           }
         }
@@ -160,7 +185,10 @@ export const useEditor = create<EditorState>()(
             errors = 0;
           } catch (err) {
             if (++errors >= renderTuning.maxPollErrors) {
-              if (current()) patchRender(id, { state: "failed", error: `Lost track of job: ${errMsg(err)}`, finishedAt: Date.now() });
+              if (current()) {
+                patchRender(id, { state: "failed", error: `Lost track of job: ${errMsg(err)}`, finishedAt: Date.now() });
+                toastIfNeeded(err);
+              }
               return;
             }
             await sleep(renderTuning.pollMs);
@@ -173,7 +201,10 @@ export const useEditor = create<EditorState>()(
               const { url } = await postJson<{ url: string }>(`/api/shot/${encodeURIComponent(jobId)}/rehost`, {});
               if (current()) patchRender(id, { state: "done", clipUrl: url, progress: 1, finishedAt: Date.now() });
             } catch (err) {
-              if (current()) patchRender(id, { state: "failed", error: `Rendered, but saving the clip failed: ${errMsg(err)}`, finishedAt: Date.now() });
+              if (current()) {
+                patchRender(id, { state: "failed", error: `Rendered, but saving the clip failed: ${errMsg(err)}`, finishedAt: Date.now() });
+                toastIfNeeded(err);
+              }
             }
             return;
           }
@@ -271,6 +302,7 @@ export const useEditor = create<EditorState>()(
           set({ title: data.title, tagline: data.tagline, shots: data.shots, provider: data.provider, status: "idle", renders: {} });
         } catch (err) {
           set({ status: "error", error: err instanceof Error ? err.message : String(err) });
+          toastIfNeeded(err);
         }
       },
 

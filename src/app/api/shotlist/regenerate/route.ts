@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { CONTENT_MESSAGE, contentViolation } from "../../../../../lib/contentFilter";
 import { CAMERA_MOVES, LENSES, SHOT_TYPES } from "../../../../../lib/shot";
 import { regenerateShotAction, ShotListError } from "../../../../../lib/shotList";
 
@@ -30,10 +31,13 @@ export async function POST(req: Request) {
   if (!parsed.success)
     return NextResponse.json({ error: "invalid_request", message: z.prettifyError(parsed.error) }, { status: 400 });
 
+  if (contentViolation(parsed.data.logline)) return NextResponse.json({ error: "content_blocked", message: CONTENT_MESSAGE }, { status: 422 });
+
   try {
     return NextResponse.json(await regenerateShotAction(parsed.data));
   } catch (err) {
     const status = err instanceof ShotListError ? err.httpStatus : 500;
-    return NextResponse.json({ error: "regenerate_failed", message: err instanceof Error ? err.message : String(err) }, { status });
+    console.error("[shotlist/regenerate]", err instanceof Error ? err.message : err);
+    return NextResponse.json({ error: "regenerate_failed", message: "Couldn't rewrite that shot. Try again." }, { status });
   }
 }

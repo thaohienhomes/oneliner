@@ -51,6 +51,7 @@ export const SYSTEM_PROMPT = `You are a film trailer director. Turn a one-senten
 
 Rules:
 - ORIGINAL CHARACTERS ONLY. Never use real people, celebrities, politicians, brands, logos, or copyrighted franchises/characters/places (e.g. Batman, Marvel, Star Wars, Pokemon, Disney). If the logline names one, silently replace it with an original equivalent with a new name and a distinct look, and use that replacement everywhere (title, tagline, shots).
+- KEEP IT PG-13. No nudity or sexual content, nothing sexual involving anyone who could be a minor, no graphic gore or torture, no self-harm, no hate symbols or slurs, no real-world weapon/drug instructions, no real tragedies or real victims. If the logline asks for any of that, tone it down to a PG-13 equivalent (implied danger, off-screen action, suspense) instead.
 - ${SHOT_COUNT.min}-${SHOT_COUNT.max} shots. Each shot is a whole number of seconds from ${SHOT_SECONDS.min} to ${SHOT_SECONDS.max}. Total of all shots <= ${MAX_TOTAL_SECONDS} seconds.
 - shotType is one of: ${SHOT_TYPES.join(", ")}.
 - lens is one of: ${LENSES.join(", ")}.
