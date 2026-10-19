@@ -5,6 +5,7 @@ import { ASPECTS, MAX_TOTAL_SECONDS, SHOT_COUNT } from "../../lib/renderConfig";
 import { totalSeconds } from "../../lib/shotPresets";
 import { useEditor } from "../store/editorStore";
 import { ShotCard } from "./ShotCard";
+import { StitchPanel } from "./StitchPanel";
 
 export function Editor() {
   const s = useEditor();
@@ -121,6 +122,8 @@ export function Editor() {
               )}
             </div>
           </section>
+
+          <StitchPanel />
 
           {/* Storyboard */}
           <section aria-label="Storyboard" className="-mx-4 flex snap-x snap-mandatory gap-4 overflow-x-auto px-4 pb-6 sm:-mx-8 sm:px-8">

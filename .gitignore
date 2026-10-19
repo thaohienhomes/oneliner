@@ -23,6 +23,12 @@
 # re-hosted clips in local dev (lib/rehost.ts; Vercel Blob in prod)
 /public/renders/
 
+# ffmpeg.wasm worker, copied from node_modules on predev/prebuild
+/public/ffmpeg/
+
+# local scratch (stitch test output)
+/.tmp/
+
 # misc
 .DS_Store
 *.pem

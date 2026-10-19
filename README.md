@@ -22,7 +22,7 @@ _TODO: link to the deployed app._
 
 1. **Logline → shot list** — an LLM expands your sentence into a short sequence of trailer shots.
 2. **Shots → clips** — each shot is rendered with **LTX-2** video generation running on ComfyUI, driven through the **Comfy SDK** (Comfy Cloud by default, or your own ComfyUI server).
-3. **Clips → trailer** — the clips are assembled into one video and stored in Vercel Blob.
+3. **Clips → trailer** — **in your browser** with ffmpeg.wasm: a canvas title card (title + tagline, letterbox bars) and an optional 1s cold-open title are encoded to MP4, every clip is normalized to the same size/fps/pixel format, held on its last frame to its exact target length (LTX rounds frames down: a 2s shot comes out 1.96s), and joined with 6-frame crossfades. Clip audio is kept only if every clip has it; otherwise the track is silence. Preview + Download MP4.
 
 _TODO: diagram and details._
 
@@ -43,7 +43,11 @@ No LLM key? The shot-list generator falls back to a deterministic mock (`LLM_API
 ```bash
 npm test                                         # unit + editor tests (vitest)
 npx tsx scripts/check-shotlist.ts http://localhost:3000   # API smoke test against a running dev server
+npx tsx scripts/stitch-test.ts                   # stitch filter graph with native ffmpeg + ffprobe checks (no credits)
+npx tsx scripts/stitch-browser.ts http://localhost:3100   # same, through the real UI + ffmpeg.wasm in headless Edge/Chrome
 ```
+
+The stitcher's ffmpeg arguments live in `lib/stitchPlan.ts` and are shared by the browser and both scripts. ffmpeg.wasm uses the single-threaded core from unpkg (no COOP/COEP headers needed); its worker is copied unbundled to `public/ffmpeg/` on `predev`/`prebuild`, because bundling it breaks the core's dynamic import.
 
 ## Deploy
 

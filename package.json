@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "predev": "node scripts/copy-ffmpeg-worker.mjs",
     "dev": "next dev --turbopack",
+    "prebuild": "node scripts/copy-ffmpeg-worker.mjs",
     "build": "next build --turbopack",
     "start": "next start",
     "lint": "eslint",
@@ -13,6 +15,8 @@
   "dependencies": {
     "@ai-sdk/openai": "^4.0.96",
     "@comfyorg/sdk": "^0.5.0",
+    "@ffmpeg/ffmpeg": "^0.12.15",
+    "@ffmpeg/util": "^0.12.2",
     "@vercel/blob": "^2.8.2",
     "ai": "^7.0.143",
     "next": "15.5.28",
@@ -32,6 +36,7 @@
     "eslint": "^9",
     "eslint-config-next": "15.5.28",
     "jsdom": "^29.1.1",
+    "playwright-core": "^1.64.1",
     "tailwindcss": "^4",
     "tsx": "^4.23.15",
     "typescript": "^5",
